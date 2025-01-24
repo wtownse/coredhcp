@@ -1,4 +1,4 @@
-module github.com/coredhcp/coredhcp
+module github.com/wtownsw/coredhcp
 
 go 1.22.0
 
