@@ -21,12 +21,11 @@
 //
 // server6:
 //   - plugins:
-//     - nbp: http://[2001:db8:a::1]/nbp
+//   - nbp: http://[2001:db8:a::1]/nbp
 //
 // server4:
 //   - plugins:
-//     - nbp: tftp://10.0.0.254/nbp
-//
+//   - nbp: tftp://10.0.0.254/nbp
 package nbp
 
 import (
@@ -38,6 +37,7 @@ import (
 	"github.com/coredhcp/coredhcp/plugins"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 var log = logger.GetLogger("plugins/nbp")
@@ -50,17 +50,22 @@ var Plugin = plugins.Plugin{
 }
 
 var (
-	opt59, opt60 dhcpv6.Option
-	opt66, opt67 *dhcpv4.Option
+	opt59, opt60           dhcpv6.Option
+	opt66, opt67, opt67efi *dhcpv4.Option
 )
 
 func parseArgs(args ...string) (*url.URL, error) {
-	if len(args) != 1 {
+	if len(args) < 1 {
 		return nil, fmt.Errorf("Exactly one argument must be passed to NBP plugin, got %d", len(args))
 	}
 	return url.Parse(args[0])
 }
-
+func parseArgsEfi(args ...string) (*url.URL, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("Exactly one argument must be passed to NBP plugin, got %d", len(args))
+	}
+	return url.Parse(args[1])
+}
 func setup6(args ...string) (handler.Handler6, error) {
 	u, err := parseArgs(args...)
 	if err != nil {
@@ -80,11 +85,12 @@ func setup6(args ...string) (handler.Handler6, error) {
 
 func setup4(args ...string) (handler.Handler4, error) {
 	u, err := parseArgs(args...)
+	uefi, err := parseArgsEfi(args...)
 	if err != nil {
 		return nil, err
 	}
 
-	var otsn, obfn dhcpv4.Option
+	var otsn, obfn, obfnefi dhcpv4.Option
 	switch u.Scheme {
 	case "http", "https", "ftp":
 		obfn = dhcpv4.OptBootFileName(u.String())
@@ -93,8 +99,17 @@ func setup4(args ...string) (handler.Handler4, error) {
 		obfn = dhcpv4.OptBootFileName(u.Path)
 		opt66 = &otsn
 	}
+	switch u.Scheme {
+	case "http", "https", "ftp":
+		obfnefi = dhcpv4.OptBootFileName(uefi.String())
+	default:
+		otsn = dhcpv4.OptTFTPServerName(uefi.Host)
+		obfnefi = dhcpv4.OptBootFileName(uefi.Path)
+		opt66 = &otsn
+	}
 
 	opt67 = &obfn
+	opt67efi = &obfnefi
 	log.Printf("loaded NBP plugin for DHCPv4.")
 	return nbpHandler4, nil
 }
@@ -135,8 +150,14 @@ func nbpHandler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		log.Debugf("Added NBP %s / %s to request", opt66, opt67)
 	}
 	if req.IsOptionRequested(dhcpv4.OptionBootfileName) {
-		resp.Options.Update(*opt67)
-		log.Debugf("Added NBP %s to request", opt67)
+		if req.ClientArch()[0] == iana.EFI_X86_64 || req.ClientArch()[0] == iana.EFI_IA32 {
+
+			resp.Options.Update(*opt67efi)
+			log.Debugf("Added NBP %s to request", opt67)
+		} else {
+			resp.Options.Update(*opt67)
+			log.Debugf("Added NBP %s to request", opt67)
+		}
 	}
 	return resp, true
 }
